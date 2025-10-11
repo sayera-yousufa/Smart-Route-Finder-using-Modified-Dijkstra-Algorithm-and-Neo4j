@@ -1,0 +1,416 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="title">Smart Path Finder - Dashboard</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <style>
+        /* Default Dark Theme */
+        body {
+            background: linear-gradient(135deg, #1e3a8a, #3b82f6);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            font-family: 'Arial', sans-serif;
+            color: white;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+        /* Light Theme */
+        body.light-theme {
+            background: linear-gradient(135deg, #e0f2fe, #93c5fd);
+            color: #1e3a8a;
+        }
+        /* Button Hover Animation */
+        .nav-button {
+            transition: transform 0.3s ease, background-color 0.3s ease;
+        }
+        .nav-button:hover {
+            transform: scale(1.05);
+            background-color: #2563eb;
+        }
+        /* Footer Styling */
+        footer {
+            margin-top: auto;
+        }
+        /* Loading Spinner */
+        .loading {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        .spinner {
+            border: 6px solid #f3f3f3;
+            border-top: 6px solid #3b82f6;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Overview, Feedback, and Status Section Styling */
+        .overview, .feedback, .status {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px);
+            border-radius: 0.5rem;
+            padding: 2rem;
+            margin-top: 2rem;
+        }
+        body.light-theme .overview, body.light-theme .feedback, body.light-theme .status {
+            background: rgba(0, 0, 0, 0.05);
+        }
+        /* Status Indicators */
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+    </style>
+</head>
+<body class="text-white">
+    <!-- Loading Spinner -->
+    <div id="loading" class="loading">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Header -->
+    <header class="text-center py-10">
+        <h1 class="text-4xl md:text-5xl font-bold" data-i18n="header">Smart Path Finder</h1>
+        <p class="mt-2 text-lg md:text-xl" data-i18n="tagline">Navigate Campuses and Cities with Ease and Accessibility</p>
+        <div class="mt-4 flex justify-center gap-4">
+            <button class="bg-gray-200 text-blue-900 py-2 px-4 rounded-lg hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400" onclick="toggleTheme()" aria-label="Toggle theme">
+                <i class="fas fa-adjust mr-2"></i><span data-i18n="theme_toggle">Toggle Theme</span>
+            </button>
+            <select id="languageSelect" class="bg-gray-200 text-blue-900 py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-400" onchange="changeLanguage()">
+                <option value="en">English</option>
+                <option value="es">Español</option>
+                <option value="hi">हिन्दी</option>
+            </select>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow flex items-center justify-center">
+        <div class="max-w-4xl mx-auto px-4">
+            <!-- Status Dashboard -->
+            <section class="status">
+                <h2 class="text-2xl font-semibold mb-4" data-i18n="status_title">System Status</h2>
+                <div class="flex flex-col gap-2">
+                    <div class="status-indicator">
+                        <i id="flaskStatusIcon" class="fas fa-circle text-red-600"></i>
+                        <span data-i18n="flask_status">Flask Server (Campus Navigation):</span>
+                        <span id="flaskStatus">Checking...</span>
+                    </div>
+                    <div class="status-indicator">
+                        <i id="neo4jStatusIcon" class="fas fa-circle text-red-600"></i>
+                        <span data-i18n="neo4j_status">Neo4j Database (Regional Navigation):</span>
+                        <span id="neo4jStatus">Checking...</span>
+                    </div>
+                </div>
+            </section>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Campus Navigation Button -->
+                <button class="nav-button bg-blue-600 text-white py-6 px-8 rounded-lg shadow-lg flex items-center justify-center space-x-3 focus:outline-none focus:ring-2 focus:ring-blue-400" onclick="goToCampus()">
+                    <i class="fas fa-university fa-2x"></i>
+                    <div>
+                        <h2 class="text-xl font-semibold" data-i18n="campus_nav">Campus Navigation</h2>
+                        <p class="text-sm" data-i18n="campus_desc">Find personalized routes within your campus</p>
+                    </div>
+                </button>
+                <!-- Regional Navigation Button -->
+                <button class="nav-button bg-green-600 text-white py-6 px-8 rounded-lg shadow-lg flex items-center justify-center space-x-3 focus:outline-none focus:ring-2 focus:ring-green-400" onclick="goToRegional()">
+                    <i class="fas fa-map-marked-alt fa-2x"></i>
+                    <div>
+                        <h2 class="text-xl font-semibold" data-i18n="regional_nav">Regional Navigation</h2>
+                        <p class="text-sm" data-i18n="regional_desc">Explore city-wide routes with real-time data</p>
+                    </div>
+                </button>
+            </div>
+
+            <!-- Project Overview Section -->
+            <section class="overview">
+                <h2 class="text-2xl font-semibold mb-4" data-i18n="overview_title">Project Overview</h2>
+                <p class="mb-4" data-i18n="overview_desc">Smart Path Finder is an innovative navigation platform designed to simplify movement within complex university campuses and across cities. Our goal is to provide accessible, efficient, and personalized routing for all users, including students, visitors, and those with accessibility needs.</p>
+                <h3 class="text-xl font-medium mb-2" data-i18n="features_title">Key Features:</h3>
+                <ul class="list-disc list-inside">
+                    <li data-i18n="feature_campus"><strong>Campus Navigation:</strong> Optimal routes considering accessibility, crowd levels, and distance, with interactive maps.</li>
+                    <li data-i18n="feature_regional"><strong>Regional Navigation:</strong> Real-time city-wide routing using OpenStreetMap and Neo4j, with address autocomplete.</li>
+                    <li data-i18n="feature_dashboard"><strong>Unified Dashboard:</strong> Seamless access to both navigation systems through an intuitive interface.</li>
+                </ul>
+                <p class="mt-4" data-i18n="tech_stack">Built with Flask, Neo4j, Leaflet.js, and OSMNx, Smart Path Finder enhances mobility and accessibility for diverse users.</p>
+            </section>
+
+            <!-- Feedback Form -->
+            <section class="feedback">
+                <h2 class="text-2xl font-semibold mb-4" data-i18n="feedback_title">Provide Feedback</h2>
+                <div class="bg-white bg-opacity-20 p-4 rounded-lg">
+                    <div class="grid grid-cols-1 gap-4">
+                        <input type="text" id="feedbackName" placeholder="Your Name" data-i18n-placeholder="name_placeholder" class="bg-gray-100 text-blue-900 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400">
+                        <input type="email" id="feedbackEmail" placeholder="Your Email" data-i18n-placeholder="email_placeholder" class="bg-gray-100 text-blue-900 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400">
+                        <textarea id="feedbackComments" placeholder="Your Feedback" data-i18n-placeholder="comments_placeholder" class="bg-gray-100 text-blue-900 p-2 rounded-lg h-32 focus:outline-none focus:ring-2 focus:ring-blue-400"></textarea>
+                        <button onclick="submitFeedback()" class="bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400" data-i18n="submit_feedback">Submit Feedback</button>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="text-center py-6">
+        <p data-i18n="footer_copyright">© 2025 Smart Path Finder Team. All rights reserved.</p>
+    </footer>
+
+    <!-- JavaScript for Navigation and Features -->
+    <script>
+        // Translation Dictionary
+        const translations = {
+            en: {
+                title: "Smart Path Finder - Dashboard",
+                header: "Smart Path Finder",
+                tagline: "Navigate Campuses and Cities with Ease and Accessibility",
+                theme_toggle: "Toggle Theme",
+                status_title: "System Status",
+                flask_status: "Flask Server (Campus Navigation):",
+                neo4j_status: "Neo4j Database (Regional Navigation):",
+                campus_nav: "Campus Navigation",
+                campus_desc: "Find personalized routes within your campus",
+                regional_nav: "Regional Navigation",
+                regional_desc: "Explore city-wide routes with real-time data",
+                overview_title: "Project Overview",
+                overview_desc: "Smart Path Finder is an innovative navigation platform designed to simplify movement within complex university campuses and across cities. Our goal is to provide accessible, efficient, and personalized routing for all users, including students, visitors, and those with accessibility needs.",
+                features_title: "Key Features:",
+                feature_campus: "<strong>Campus Navigation:</strong> Optimal routes considering accessibility, crowd levels, and distance, with interactive maps.",
+                feature_regional: "<strong>Regional Navigation:</strong> Real-time city-wide routing using OpenStreetMap and Neo4j, with address autocomplete.",
+                feature_dashboard: "<strong>Unified Dashboard:</strong> Seamless access to both navigation systems through an intuitive interface.",
+                tech_stack: "Built with Flask, Neo4j, Leaflet.js, and OSMNx, Smart Path Finder enhances mobility and accessibility for diverse users.",
+                feedback_title: "Provide Feedback",
+                name_placeholder: "Your Name",
+                email_placeholder: "Your Email",
+                comments_placeholder: "Your Feedback",
+                submit_feedback: "Submit Feedback",
+                footer_copyright: "© 2025 Smart Path Finder Team. All rights reserved."
+            },
+            es: {
+                title: "Buscador de Rutas Inteligente - Panel",
+                header: "Buscador de Rutas Inteligente",
+                tagline: "Navega por campus y ciudades con facilidad y accesibilidad",
+                theme_toggle: "Cambiar Tema",
+                status_title: "Estado del Sistema",
+                flask_status: "Servidor Flask (Navegación en Campus):",
+                neo4j_status: "Base de Datos Neo4j (Navegación Regional):",
+                campus_nav: "Navegación en Campus",
+                campus_desc: "Encuentra rutas personalizadas dentro de tu campus",
+                regional_nav: "Navegación Regional",
+                regional_desc: "Explora rutas urbanas con datos en tiempo real",
+                overview_title: "Resumen del Proyecto",
+                overview_desc: "Buscador de Rutas Inteligente es una plataforma innovadora diseñada para simplificar el movimiento dentro de campus universitarios complejos y a través de ciudades. Nuestro objetivo es proporcionar rutas accesibles, eficientes y personalizadas para todos los usuarios, incluidos estudiantes, visitantes y aquellos con necesidades de accesibilidad.",
+                features_title: "Características Clave:",
+                feature_campus: "<strong>Navegación en Campus:</strong> Rutas óptimas considerando accesibilidad, niveles de multitud y distancia, con mapas interactivos.",
+                feature_regional: "<strong>Navegación Regional:</strong> Rutas urbanas en tiempo real usando OpenStreetMap y Neo4j, con autocompletado de direcciones.",
+                feature_dashboard: "<strong>Panel Unificado:</strong> Acceso fluido a ambos sistemas de navegación a través de una interfaz intuitiva.",
+                tech_stack: "Construido con Flask, Neo4j, Leaflet.js y OSMNx, Buscador de Rutas Inteligente mejora la movilidad y accesibilidad para diversos usuarios.",
+                feedback_title: "Proporcionar Retroalimentación",
+                name_placeholder: "Tu Nombre",
+                email_placeholder: "Tu Correo Electrónico",
+                comments_placeholder: "Tu Retroalimentación",
+                submit_feedback: "Enviar Retroalimentación",
+                footer_copyright: "© 2025 Equipo Buscador de Rutas Inteligente. Todos los derechos reservados."
+            },
+            hi: {
+                title: "स्मार्ट पथ खोजक - डैशबोर्ड",
+                header: "स्मार्ट पथ खोजक",
+                tagline: "कैंपस और शहरों में आसानी और पहुंच के साथ नेविगेट करें",
+                theme_toggle: "थीम टॉगल करें",
+                status_title: "सिस्टम स्थिति",
+                flask_status: "फ्लास्क सर्वर (कैंपस नेविगेशन):",
+                neo4j_status: "नियो4जे डेटाबेस (क्षेत्रीय नेविगेशन):",
+                campus_nav: "कैंपस नेविगेशन",
+                campus_desc: "अपने कैंपस के भीतर व्यक्तिगत मार्ग खोजें",
+                regional_nav: "क्षेत्रीय नेविगेशन",
+                regional_desc: "वास्तविक समय डेटा के साथ शहर-व्यापी मार्गों का अन्वेषण करें",
+                overview_title: "परियोजना अवलोकन",
+                overview_desc: "स्मार्ट पथ खोजक एक नवीन नेविगेशन प्लेटफॉर्म है जो जटिल विश्वविद्यालय कैंपस और शहरों में गतिशीलता को सरल बनाने के लिए डिज़ाइन किया गया है। हमारा लक्ष्य सभी उपयोगकर्ताओं, जिसमें छात्र, आगंतुक और पहुंच आवश्यकताओं वाले लोग शामिल हैं, के लिए सुलभ, कुशल और व्यक्तिगत मार्ग प्रदान करना है।",
+                features_title: "मुख्य विशेषताएं:",
+                feature_campus: "<strong>कैंपस नेविगेशन:</strong> पहुंच, भीड़ स्तर और दूरी को ध्यान में रखते हुए इष्टतम मार्ग, इंटरैक्टिव नक्शों के साथ।",
+                feature_regional: "<strong>क्षेत्रीय नेविगेशन:</strong> ओपनस्ट्रीटमैप और नियो4जे का उपयोग करके वास्तविक समय में शहर-व्यापी मार्ग, पते ऑटोकम्प्लीट के साथ।",
+                feature_dashboard: "<strong>एकीकृत डैशबोर्ड:</strong> एक सहज इंटरफ़ेस के माध्यम से दोनों नेविगेशन सिस्टम तक निर्बाध पहुंच।",
+                tech_stack: "फ्लास्क, नियो4जे, लीफलेट.जेएस और ओएसएमएनएक्स के साथ निर्मित, स्मार्ट पथ खोजक विविध उपयोगकर्ताओं के लिए गतिशीलता और पहुंच को बढ़ाता है।",
+                feedback_title: "प्रतिक्रिया प्रदान करें",
+                name_placeholder: "आपका नाम",
+                email_placeholder: "आपका ईमेल",
+                comments_placeholder: "आपकी प्रतिक्रिया",
+                submit_feedback: "प्रतिक्रिया सबमिट करें",
+                footer_copyright: "© 2025 स्मार्ट पथ खोजक टीम। सभी अधिकार सुरक्षित।"
+            }
+        };
+
+        // Theme Toggle
+        function toggleTheme() {
+            document.body.classList.toggle('light-theme');
+            localStorage.setItem('theme', document.body.classList.contains('light-theme') ? 'light' : 'dark');
+        }
+
+        // Load saved theme
+        if (localStorage.getItem('theme') === 'light') {
+            document.body.classList.add('light-theme');
+        }
+
+        // Loading Animation
+        function showLoading() {
+            document.getElementById('loading').style.display = 'flex';
+        }
+
+        // Navigation Functions
+        function goToCampus() {
+            showLoading();
+            setTimeout(() => { window.location.href = 'http://localhost:5050'; }, 500);
+        }
+
+        function goToRegional() {
+            showLoading();
+            setTimeout(() => { window.location.href = 'address_routing.html'; }, 500);
+        }
+
+        // Multi-Language Support
+        function changeLanguage() {
+            const lang = document.getElementById('languageSelect').value;
+            document.querySelectorAll('[data-i18n]').forEach(element => {
+                const key = element.getAttribute('data-i18n');
+                element.innerHTML = translations[lang][key] || element.innerHTML;
+            });
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(element => {
+                const key = element.getAttribute('data-i18n-placeholder');
+                element.placeholder = translations[lang][key] || element.placeholder;
+            });
+            document.title = translations[lang].title;
+            localStorage.setItem('language', lang);
+        }
+
+        // Load saved language
+        if (localStorage.getItem('language')) {
+            document.getElementById('languageSelect').value = localStorage.getItem('language');
+            changeLanguage();
+        }
+
+        // Feedback Form Submission
+        function submitFeedback() {
+            const name = document.getElementById('feedbackName').value;
+            const email = document.getElementById('feedbackEmail').value;
+            const comments = document.getElementById('feedbackComments').value;
+            if (!name || !email || !comments) {
+                alert('Please fill in all fields.');
+                return;
+            }
+            const feedback = { name, email, comments, timestamp: new Date().toISOString() };
+            let feedbacks = JSON.parse(localStorage.getItem('feedbacks') || '[]');
+            feedbacks.push(feedback);
+            localStorage.setItem('feedbacks', JSON.stringify(feedbacks));
+            alert('Thank you for your feedback!');
+            document.getElementById('feedbackName').value = '';
+            document.getElementById('feedbackEmail').value = '';
+            document.getElementById('feedbackComments').value = '';
+        }
+
+        // Real-Time Status Checks
+        async function checkFlaskStatus() {
+            const statusElement = document.getElementById('flaskStatus');
+            const statusIcon = document.getElementById('flaskStatusIcon');
+            try {
+                const response = await fetch('http://localhost:5050', { method: 'HEAD', mode: 'no-cors' });
+                statusElement.textContent = translations[document.getElementById('languageSelect').value].online || 'Online';
+                statusIcon.classList.remove('text-red-600');
+                statusIcon.classList.add('text-green-600');
+            } catch (error) {
+                statusElement.textContent = translations[document.getElementById('languageSelect').value].offline || 'Offline';
+                statusIcon.classList.remove('text-green-600');
+                statusIcon.classList.add('text-red-600');
+            }
+        }
+
+        async function checkNeo4jStatus() {
+            const statusElement = document.getElementById('neo4jStatus');
+            const statusIcon = document.getElementById('neo4jStatusIcon');
+            try {
+                const response = await fetch('address_routing.html', { method: 'HEAD' });
+                if (!response.ok) {
+                    throw new Error('address_routing.html not found');
+                }
+                statusElement.textContent = translations[document.getElementById('languageSelect').value].ready || 'Ready (Ensure database is populated)';
+                statusIcon.classList.remove('text-red-600');
+                statusIcon.classList.add('text-green-600');
+            } catch (error) {
+                statusElement.textContent = translations[document.getElementById('languageSelect').value].not_ready || 'Not Ready';
+                statusIcon.classList.remove('text-green-600');
+                statusIcon.classList.add('text-red-600');
+            }
+        }
+
+        // Run status checks periodically
+        function updateStatus() {
+            checkFlaskStatus();
+            checkNeo4jStatus();
+        }
+        updateStatus();
+        setInterval(updateStatus, 30000); // Check every 30 seconds
+
+        // Initialize page
+        window.onload = () => {
+            changeLanguage();
+            updateStatus();
+        };
+    </script>
+</body>
+</html>
